@@ -84,6 +84,9 @@ var
   EquipChar:string;
   ifRecLog:boolean;//是否记录调试日志
   EquipUnid:integer;//设备唯一编号
+  No_Patient_ID:integer;//联机号位
+  Len_Patient_ID:integer;//联机号长度
+  No_Result:integer;//结果位
 
   hnd:integer;
   bRegister:boolean;
@@ -239,6 +242,10 @@ begin
   SpecStatus:=ini.ReadString(IniSection,'默认样本状态','');
   CombinID:=ini.ReadString(IniSection,'组合项目代码','');
 
+  No_Patient_ID:=ini.ReadInteger(IniSection,'联机号位',2);//BC3000Plus:18
+  Len_Patient_ID:=ini.ReadInteger(IniSection,'联机号长度',8);//BC3000Plus:4
+  No_Result:=ini.ReadInteger(IniSection,'结果位',23);//BC3000Plus:35
+  
   LisFormCaption:=ini.ReadString(IniSection,'检验系统窗体标题','');
   EquipUnid:=ini.ReadInteger(IniSection,'设备唯一编号',-1);
   
@@ -316,7 +323,7 @@ end;
 
 function TfrmMain.GetSpecNo(const Value:string):string; //取得联机号
 begin
-    result:=trim(COPY(trim(Value),2,8));
+    result:=trim(COPY(trim(Value),No_Patient_ID,Len_Patient_ID));
     result:='0000'+result;
     result:=rightstr(result,4);
 end;
@@ -389,6 +396,9 @@ begin
       '校验位'+#2+'Combobox'+#2+'None'+#13+'Even'+#13+'Odd'+#13+'Mark'+#13+'Space'+#2+'0'+#2+#2+#3+
       '工作组'+#2+'Edit'+#2+#2+'1'+#2+#2+#3+
       '仪器字母'+#2+'Edit'+#2+#2+'1'+#2+#2+#3+
+      '联机号位'+#2+'Edit'+#2+#2+'1'+#2+'不含0x2,从1开始,第几位'+#2+#3+
+      '联机号长度'+#2+'Edit'+#2+#2+'1'+#2+'从"联机号位"开始,取几位'+#2+#3+
+      '结果位'+#2+'Edit'+#2+#2+'1'+#2+'不含0x2,从1开始,第几位'+#2+#3+
       '检验系统窗体标题'+#2+'Edit'+#2+#2+'1'+#2+#2+#3+
       '默认样本类型'+#2+'Edit'+#2+#2+'1'+#2+#2+#3+
       '默认样本状态'+#2+'Edit'+#2+#2+'1'+#2+#2+#3+
@@ -428,7 +438,7 @@ begin
   if not OpenDialog1.Execute then exit;
   ls:=Tstringlist.Create;
   ls.LoadFromFile(OpenDialog1.FileName);
-  ComDataPacket1Packet(nil,ls.Text);
+  ComDataPacket1Packet(nil,#$2+trim(ls.Text)+#$1A);
   ls.Free;
 end;
 
@@ -446,7 +456,7 @@ procedure TfrmMain.ComDataPacket1Packet(Sender: TObject;
   const Str: String);
 var
   SpecNo:string;
-  rfm2,rfmtx:string;
+  rfm2{,rfmtx}:string;
   sValue:string;
   FInts:OleVariant;
   ReceiveItemInfo:OleVariant;
@@ -460,30 +470,27 @@ begin
 
   SpecNo:=GetSpecNo(Str);
 
-  ReceiveItemInfo:=VarArrayCreate([0,19-1],varVariant);//共18项
+  ReceiveItemInfo:=VarArrayCreate([0,19-1],varVariant);//共19项
 
   //========分解图形数据==================
-  rfmtx:=Str;
-  delete(rfmtx,1,23);
-  delete(rfmtx,1,62+64);
   wbcOstr:='';RBCOstr:='';PLTOstr:='';
   //WBC
-  WBCCSTR:=COPY(rfmtx,1,256*3);
+  WBCCSTR:=rightstr(Str,256*3*3+1);//1为#$1A
+  WBCCSTR:=copy(WBCCSTR,1,256*3);
   wbcOstr:=DIFF_decode(wbcCstr);
-  delete(rfmtx,1,256*3);
 
   //RBC
-  RBCCSTR:=COPY(rfmtx,1,256*3);
+  RBCCSTR:=rightstr(Str,256*3*2+1);//1为#$1A
+  RBCCSTR:=copy(RBCCSTR,1,256*3);
   RBCOstr:=DIFF_decode(RBCCstr);
-  delete(rfmtx,1,256*3);
 
   //PLT
-  PLTCSTR:=COPY(rfmtx,1,256*3);
+  PLTCSTR:=rightstr(Str,256*3*1+1);//1为#$1A
   PLTOstr:=DIFF_decode(PLTCstr);
   //======================================
 
   rfm2:=Str;
-  delete(rfm2,1,23);
+  delete(rfm2,1,No_Result+1-1);//+1:表示要删除0x2;-1:表示不能删除结果的第1位
   for  i:=1  to 19 do
   begin
     if i=1 then sValue:=copy(rfm2,1,4);
@@ -517,7 +524,8 @@ begin
   if bRegister then
   begin
     FInts :=CreateOleObject('Data2LisSvr.Data2Lis');
-    FInts.fData2Lis(ReceiveItemInfo,(SpecNo),'',
+    FInts.fData2Lis(ReceiveItemInfo,(SpecNo),
+      copy(Str,No_Result-7,4)+'-'+copy(Str,No_Result-11,2)+'-'+copy(Str,No_Result-9,2)+' '+copy(Str,No_Result-3,2)+':'+copy(Str,No_Result-1,2)+':00',
       (GroupName),(SpecType),(SpecStatus),(EquipChar),
       (CombinID),'',(LisFormCaption),(ConnectString),
       (QuaContSpecNoG),(QuaContSpecNo),(QuaContSpecNoD),'',
